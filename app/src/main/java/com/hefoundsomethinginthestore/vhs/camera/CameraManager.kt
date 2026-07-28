@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.provider.MediaStore
 import android.util.Log
 import androidx.camera.core.Camera
@@ -23,7 +24,6 @@ import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
-import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -45,6 +45,10 @@ class CameraManager(private val context: Context) {
         private set
 
     var currentZoomRatio = 1.0f
+        private set
+
+    // Exposed after recording finalizes so VideoProcessor can grab it
+    var lastRecordingUri: Uri? = null
         private set
 
     fun startCamera(
@@ -78,7 +82,6 @@ class CameraManager(private val context: Context) {
                     videoCapture
                 )
 
-                // Restore camera properties
                 camera?.cameraControl?.setZoomRatio(currentZoomRatio)
                 camera?.cameraControl?.enableTorch(isTorchEnabled)
 
@@ -108,7 +111,7 @@ class CameraManager(private val context: Context) {
     }
 
     fun setZoomRatio(ratio: Float) {
-        currentZoomRatio = ratio.coerceIn(1.0f, 5.0f)
+        currentZoomRatio = ratio.coerceIn(1.0f, 8.0f)
         camera?.cameraControl?.setZoomRatio(currentZoomRatio)
     }
 
@@ -169,9 +172,15 @@ class CameraManager(private val context: Context) {
         }
     }
 
-    fun startRecording(onEvent: (VideoRecordEvent) -> Unit) {
+    /**
+     * Starts recording and calls [onFinalized] with the saved [Uri] when recording ends.
+     * The URI is also stored in [lastRecordingUri] for VideoProcessor to consume.
+     */
+    fun startRecording(onFinalized: (Uri?) -> Unit) {
         val capture = videoCapture ?: return
         if (activeRecording != null) return
+
+        lastRecordingUri = null
 
         val name = "VHS_VIDEO_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(System.currentTimeMillis())
         val contentValues = ContentValues().apply {
@@ -196,16 +205,21 @@ class CameraManager(private val context: Context) {
                     is VideoRecordEvent.Finalize -> {
                         isRecording = false
                         activeRecording = null
+                        if (!event.hasError()) {
+                            lastRecordingUri = event.outputResults.outputUri
+                            onFinalized(lastRecordingUri)
+                        } else {
+                            Log.e("CameraManager", "Recording error: ${event.error}")
+                            onFinalized(null)
+                        }
                     }
+                    else -> Unit
                 }
-                onEvent(event)
             }
     }
 
     fun stopRecording() {
         activeRecording?.stop()
-        activeRecording = null
-        isRecording = false
     }
 
     fun shutdown() {
