@@ -6,7 +6,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -48,14 +47,22 @@ fun VhsFilterOverlay(
         val width = size.width
         val height = size.height
 
-        // 1. Draw Color Tint Matrix Overlay
-        drawTintOverlay(tint, width, height)
+        // 1. Draw Color Tint Matrix Overlay (If not BLANK)
+        if (tint != VhsTint.BLANK) {
+            drawTintOverlay(tint, width, height)
+        }
 
-        // 2. Draw CRT Scanlines
-        drawCrtScanlines(width, height, frameTick)
+        // 2. Draw CRT Scanlines (Skip if BLANK unless requested)
+        if (tint != VhsTint.BLANK) {
+            drawCrtScanlines(width, height, frameTick)
+        }
 
         // 3. Draw Tape Tracking & Noise Distortions
-        drawVhsNoiseAndTracking(width, height, frameTick, osdConfig.noiseIntensity, osdConfig.trackingDistortion)
+        val effectiveNoise = if (tint == VhsTint.GLITCH_MAX) 0.85f else osdConfig.noiseIntensity
+        val effectiveTracking = if (tint == VhsTint.GLITCH_MAX) 0.90f else osdConfig.trackingDistortion
+        if (tint != VhsTint.BLANK || effectiveTracking > 0.1f) {
+            drawVhsNoiseAndTracking(width, height, frameTick, effectiveNoise, effectiveTracking)
+        }
 
         // 4. Draw OSD Camcorder Vintage HUD (Text & Icons)
         drawVhsHud(
@@ -73,6 +80,9 @@ fun VhsFilterOverlay(
 
 private fun DrawScope.drawTintOverlay(tint: VhsTint, width: Float, height: Float) {
     when (tint) {
+        VhsTint.BLANK -> {
+            // Clean pass-through
+        }
         VhsTint.STANDARD -> {
             // Subtle warm VHS amber glow
             drawRect(color = Color(0x1AEE9900), size = Size(width, height))
@@ -81,6 +91,10 @@ private fun DrawScope.drawTintOverlay(tint: VhsTint, width: Float, height: Float
             // Night vision green CRT phosphor fill + brightness tint
             drawRect(color = Color(0x8800FF44), size = Size(width, height))
             drawRect(color = Color(0x33003300), size = Size(width, height))
+        }
+        VhsTint.GLITCH_MAX -> {
+            // Heavy distortion chroma shift tint
+            drawRect(color = Color(0x44FF0055), size = Size(width, height))
         }
         VhsTint.WARM_SEPIA -> {
             // Nostalgic golden sepia tone
@@ -94,8 +108,8 @@ private fun DrawScope.drawTintOverlay(tint: VhsTint, width: Float, height: Float
             // Cool low-light blue cam tint
             drawRect(color = Color(0x440099FF), size = Size(width, height))
         }
-        VhsTint.BACKROOMS -> {
-            // Liminal space fluorescent yellow-green tint
+        VhsTint.LIMINAL_YELLOW -> {
+            // Fluorescent yellow tint
             drawRect(color = Color(0x55CCCC44), size = Size(width, height))
         }
     }
@@ -105,8 +119,6 @@ private fun DrawScope.drawCrtScanlines(width: Float, height: Float, frameTick: L
     val scanlineStep = 6.0f
     val scanlineAlpha = 0.12f
     var y = 0.0f
-
-    // Alternate scanline offset slightly for interlaced feel
     val offset = if (frameTick % 2L == 0L) 0.0f else 3.0f
 
     while (y < height) {
@@ -130,43 +142,43 @@ private fun DrawScope.drawVhsNoiseAndTracking(
     val rng = Random(frameTick)
 
     // Random Static Grain Particles
-    val numParticles = (300 * noiseIntensity).toInt()
+    val numParticles = (350 * noiseIntensity).toInt()
     for (i in 0 until numParticles) {
         val px = rng.nextFloat() * width
         val py = rng.nextFloat() * height
-        val pAlpha = rng.nextFloat() * 0.4f
+        val pAlpha = rng.nextFloat() * 0.45f
         drawCircle(
             color = if (rng.nextBoolean()) Color.White.copy(alpha = pAlpha) else Color.Black.copy(alpha = pAlpha),
-            radius = rng.nextFloat() * 1.8f,
+            radius = rng.nextFloat() * 2.0f,
             center = Offset(px, py)
         )
     }
 
     // Tracking Glitch Band
-    val effectiveTracking = (trackingDistortion + (if (rng.nextFloat() < 0.08f) 0.4f else 0.0f)).coerceIn(0f, 1f)
+    val effectiveTracking = (trackingDistortion + (if (rng.nextFloat() < 0.10f) 0.5f else 0.0f)).coerceIn(0f, 1f)
     if (effectiveTracking > 0.05f) {
-        val glitchHeight = (height * 0.08f * effectiveTracking)
-        val glitchY = (frameTick * 12.0f + rng.nextFloat() * height) % height
+        val glitchHeight = (height * 0.10f * effectiveTracking)
+        val glitchY = (frameTick * 14.0f + rng.nextFloat() * height) % height
 
         // Horizontal noise bar
         drawRect(
-            color = Color.White.copy(alpha = 0.35f * effectiveTracking),
+            color = Color.White.copy(alpha = 0.40f * effectiveTracking),
             topLeft = Offset(0f, glitchY),
             size = Size(width, glitchHeight)
         )
 
-        // RGB Chroma Shift Lines inside glitch band
+        // RGB Chroma Shift Lines
         drawLine(
-            color = Color.Red.copy(alpha = 0.6f * effectiveTracking),
-            start = Offset(-15f, glitchY + 5f),
-            end = Offset(width - 15f, glitchY + 5f),
-            strokeWidth = 3f
+            color = Color.Red.copy(alpha = 0.7f * effectiveTracking),
+            start = Offset(-20f, glitchY + 5f),
+            end = Offset(width - 20f, glitchY + 5f),
+            strokeWidth = 4f
         )
         drawLine(
-            color = Color.Cyan.copy(alpha = 0.6f * effectiveTracking),
-            start = Offset(15f, glitchY + 12f),
-            end = Offset(width + 15f, glitchY + 12f),
-            strokeWidth = 3f
+            color = Color.Cyan.copy(alpha = 0.7f * effectiveTracking),
+            start = Offset(20f, glitchY + 14f),
+            end = Offset(width + 20f, glitchY + 14f),
+            strokeWidth = 4f
         )
     }
 }
@@ -193,15 +205,11 @@ private fun DrawScope.drawVhsHud(
         fontFamily = FontFamily.Monospace,
         fontWeight = FontWeight.Bold,
         fontSize = 20.sp,
-        color = Color.Black.copy(alpha = 0.8f)
+        color = Color.Black.copy(alpha = 0.85f)
     )
 
-    // Helper for OSD text with retro black drop shadow
     fun drawOsdText(text: String, x: Float, y: Float) {
-        val layoutResult = textMeasurer.measure(text, textStyle)
-        // Shadow
         drawText(textMeasurer, text, Offset(x + 2f, y + 2f), shadowStyle)
-        // Main Text
         drawText(textMeasurer, text, Offset(x, y), textStyle)
     }
 
@@ -216,19 +224,19 @@ private fun DrawScope.drawVhsHud(
         drawOsdText(statusText, 32f, 32f)
     }
 
-    // Top-Right: SP / SLP Mode & Battery Level
+    // Top-Right: SP / SLP Mode & Battery Indicator
     val modeText = "${osdConfig.speed.label}   [||||]"
     val modeWidth = textMeasurer.measure(modeText, textStyle).size.width
     drawOsdText(modeText, width - modeWidth - 32f, 32f)
 
-    // Bottom-Left: Custom Date & Title Text (Backrooms Reference)
-    val customTitle = osdConfig.customTitle.ifEmpty { "HE FOUND SOMETHING" }
+    // Bottom-Left: Custom Date & Title Text (Never mentions app name)
+    val customTitle = osdConfig.customTitle.ifEmpty { "RARE-VHS 90S" }
     drawOsdText(customTitle, 32f, height - 90f)
 
     val dateText = osdConfig.customDateText.ifEmpty { "OCT. 14 1995" }
     drawOsdText(dateText, 32f, height - 50f)
 
-    // Bottom-Right: Timecode (0:00:00)
+    // Bottom-Right: Real-time Timecode (0:00:00)
     if (osdConfig.showTimestamp) {
         val hours = recordingTimeSeconds / 3600
         val mins = (recordingTimeSeconds % 3600) / 60

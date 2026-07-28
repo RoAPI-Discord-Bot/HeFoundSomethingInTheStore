@@ -2,10 +2,15 @@ package com.hefoundsomethinginthestore.vhs.camera
 
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.provider.MediaStore
 import android.util.Log
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.MediaStoreOutputOptions
@@ -18,6 +23,7 @@ import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -26,6 +32,7 @@ class CameraManager(private val context: Context) {
     private var cameraProvider: ProcessCameraProvider? = null
     private var camera: Camera? = null
     private var videoCapture: VideoCapture<Recorder>? = null
+    private var imageCapture: ImageCapture? = null
     private var activeRecording: Recording? = null
 
     var isRecording = false
@@ -42,8 +49,7 @@ class CameraManager(private val context: Context) {
 
     fun startCamera(
         lifecycleOwner: LifecycleOwner,
-        previewView: PreviewView,
-        onRecordingStateChanged: (Boolean) -> Unit = {}
+        previewView: PreviewView
     ) {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
@@ -53,6 +59,10 @@ class CameraManager(private val context: Context) {
                 val preview = Preview.Builder().build().also {
                     it.setSurfaceProvider(previewView.surfaceProvider)
                 }
+
+                imageCapture = ImageCapture.Builder()
+                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                    .build()
 
                 val recorder = Recorder.Builder()
                     .setQualitySelector(QualitySelector.from(Quality.HIGHEST))
@@ -64,10 +74,11 @@ class CameraManager(private val context: Context) {
                     lifecycleOwner,
                     cameraSelector,
                     preview,
+                    imageCapture,
                     videoCapture
                 )
 
-                // Restore camera zoom
+                // Restore camera properties
                 camera?.cameraControl?.setZoomRatio(currentZoomRatio)
                 camera?.cameraControl?.enableTorch(isTorchEnabled)
 
@@ -101,11 +112,68 @@ class CameraManager(private val context: Context) {
         camera?.cameraControl?.setZoomRatio(currentZoomRatio)
     }
 
+    fun takePhoto(
+        onSuccess: (Bitmap) -> Unit,
+        onError: (Exception) -> Unit
+    ) {
+        val capture = imageCapture ?: run {
+            onError(IllegalStateException("ImageCapture not initialized"))
+            return
+        }
+
+        capture.takePicture(
+            ContextCompat.getMainExecutor(context),
+            object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(image: ImageProxy) {
+                    try {
+                        val buffer = image.planes[0].buffer
+                        val bytes = ByteArray(buffer.remaining())
+                        buffer.get(bytes)
+                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        onSuccess(bitmap)
+                    } catch (e: Exception) {
+                        onError(e)
+                    } finally {
+                        image.close()
+                    }
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    onError(exception)
+                }
+            }
+        )
+    }
+
+    fun saveBitmapToGallery(bitmap: Bitmap): Boolean {
+        return try {
+            val name = "VHS_PHOTO_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(System.currentTimeMillis())
+            val contentValues = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, "$name.jpg")
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/HeFoundSomethingInTheStore")
+            }
+
+            val uri = context.contentResolver.insert(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                contentValues
+            ) ?: return false
+
+            context.contentResolver.openOutputStream(uri)?.use { stream ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 95, stream)
+            }
+            true
+        } catch (e: Exception) {
+            Log.e("CameraManager", "Error saving photo: ${e.message}", e)
+            false
+        }
+    }
+
     fun startRecording(onEvent: (VideoRecordEvent) -> Unit) {
         val capture = videoCapture ?: return
         if (activeRecording != null) return
 
-        val name = "VHS_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(System.currentTimeMillis())
+        val name = "VHS_VIDEO_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(System.currentTimeMillis())
         val contentValues = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, "$name.mp4")
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
