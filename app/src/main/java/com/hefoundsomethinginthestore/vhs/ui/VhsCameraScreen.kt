@@ -1,46 +1,46 @@
 package com.hefoundsomethinginthestore.vhs.ui
 
-import android.graphics.Bitmap
-import android.graphics.Canvas as AndroidCanvas
-import android.graphics.Paint
-import android.graphics.Rect
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Camera
 import androidx.compose.material.icons.filled.Cameraswitch
-import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MovieFilter
+import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material.icons.filled.ZoomIn
-import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -62,13 +62,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -78,15 +79,11 @@ import com.hefoundsomethinginthestore.vhs.model.VideoStudioConfig
 import com.hefoundsomethinginthestore.vhs.model.VhsIntroType
 import com.hefoundsomethinginthestore.vhs.model.VhsOsdConfig
 import com.hefoundsomethinginthestore.vhs.model.VhsOutroType
-import com.hefoundsomethinginthestore.vhs.model.VhsSpeed
-import com.hefoundsomethinginthestore.vhs.model.VhsTint
 import com.hefoundsomethinginthestore.vhs.model.VhsTransitionEffect
+import com.hefoundsomethinginthestore.vhs.model.VhsTint
 import kotlinx.coroutines.delay
 
-enum class CaptureMode {
-    VIDEO,
-    PHOTO
-}
+enum class CaptureMode { VIDEO, PHOTO }
 
 @Composable
 fun VhsCameraScreen(
@@ -101,31 +98,27 @@ fun VhsCameraScreen(
     var osdConfig by remember { mutableStateOf(VhsOsdConfig()) }
     var isRecording by remember { mutableStateOf(false) }
     var recordingTimeSeconds by remember { mutableLongStateOf(0L) }
+    var isTorchOn by remember { mutableStateOf(false) }
 
     var isOsdEditOpen by remember { mutableStateOf(false) }
     var isStudioOpen by remember { mutableStateOf(false) }
-
     var studioConfig by remember { mutableStateOf(VideoStudioConfig()) }
     var editTitleText by remember { mutableStateOf(osdConfig.customTitle) }
     var editDateText by remember { mutableStateOf(osdConfig.customDateText) }
 
     var currentZoom by remember { mutableFloatStateOf(1.0f) }
-    var trackingValue by remember { mutableFloatStateOf(0.0f) }
     var noiseValue by remember { mutableFloatStateOf(0.35f) }
+    var trackingValue by remember { mutableFloatStateOf(0.0f) }
 
     var photoFlashVisible by remember { mutableStateOf(false) }
 
-    // Media Gallery Picker for video import
     val galleryPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        uri?.let {
-            isStudioOpen = true
-            Toast.makeText(context, "Loaded video! Configure Intro/Outro in Post Studio.", Toast.LENGTH_SHORT).show()
-        }
+        uri?.let { isStudioOpen = true }
     }
 
-    // Recording Timer Counter
+    // REC timer
     LaunchedEffect(isRecording) {
         if (isRecording) {
             recordingTimeSeconds = 0L
@@ -136,117 +129,156 @@ fun VhsCameraScreen(
         }
     }
 
+    // Blinking REC dot animation
+    val infiniteTransition = rememberInfiniteTransition(label = "rec")
+    val recAlpha by infiniteTransition.animateFloat(
+        initialValue = 1f, targetValue = 0f,
+        animationSpec = infiniteRepeatable(tween(500), RepeatMode.Reverse),
+        label = "recBlink"
+    )
+
     Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
 
-        // 1. Camera Viewfinder Surface
-        val previewView = remember { PreviewView(context) }
+        // 1. Camera Viewfinder — full screen
+        val previewView = remember { PreviewView(context).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
         DisposableEffect(lifecycleOwner) {
             cameraManager.startCamera(lifecycleOwner, previewView)
-            onDispose {
-                cameraManager.shutdown()
-            }
+            onDispose { cameraManager.shutdown() }
         }
 
         AndroidView(
             factory = { previewView },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, _, zoom, _ ->
+                        currentZoom = (currentZoom * zoom).coerceIn(1.0f, 8.0f)
+                        cameraManager.setZoomRatio(currentZoom)
+                    }
+                }
         )
 
-        // Photo Flash Animation
+        // Photo shutter flash
         if (photoFlashVisible) {
-            Box(modifier = Modifier.fillMaxSize().background(Color.White))
-            LaunchedEffect(Unit) {
-                delay(120)
-                photoFlashVisible = false
-            }
+            Box(modifier = Modifier.fillMaxSize().background(Color.White.copy(alpha = 0.8f)))
         }
 
-        // 2. Real-Time VHS Canvas Shader & OSD Overlay
+        // 2. VHS Canvas shader + OSD
         VhsFilterOverlay(
             tint = currentTint,
-            osdConfig = osdConfig.copy(
-                trackingDistortion = trackingValue,
-                noiseIntensity = noiseValue
-            ),
+            osdConfig = osdConfig.copy(trackingDistortion = trackingValue, noiseIntensity = noiseValue),
             isRecording = isRecording,
             recordingTimeSeconds = recordingTimeSeconds,
             modifier = Modifier.fillMaxSize()
         )
 
-        // 3. Right-Side Tactile Camcorder Control Strip
+        // 3. TOP BAR — mode switch + torch + flip (Rarevision style)
         Row(
-            modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.End
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(
+            // Torch
+            IconButton(
+                onClick = { isTorchOn = cameraManager.toggleTorch() },
                 modifier = Modifier
-                    .fillMaxHeight()
-                    .width(176.dp)
-                    .background(Color(0xFF181820))
-                    .border(2.dp, Color(0xFF30303D))
-                    .padding(6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.55f))
             ) {
-
-                // Top Header Text
-                Text(
-                    text = "RARE-VHS 90S",
-                    color = Color(0xFFAAAAAA),
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
-                    modifier = Modifier.padding(top = 2.dp)
+                Icon(
+                    if (isTorchOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                    contentDescription = "Torch",
+                    tint = if (isTorchOn) Color(0xFFFFD600) else Color.White,
+                    modifier = Modifier.size(22.dp)
                 )
+            }
 
-                // Mode Selector (Video / Photo)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFF262633))
-                        .padding(2.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
+            // Center: VIDEO / PHOTO toggle (Rarevision style pill)
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(3.dp)
+            ) {
+                CaptureModeTab("VIDEO", captureMode == CaptureMode.VIDEO, Icons.Default.Videocam) {
+                    captureMode = CaptureMode.VIDEO
+                }
+                Spacer(modifier = Modifier.width(2.dp))
+                CaptureModeTab("PHOTO", captureMode == CaptureMode.PHOTO, Icons.Default.Photo) {
+                    captureMode = CaptureMode.PHOTO
+                }
+            }
+
+            // Flip camera
+            IconButton(
+                onClick = { cameraManager.toggleCamera(lifecycleOwner, previewView) },
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.55f))
+            ) {
+                Icon(
+                    Icons.Default.Cameraswitch,
+                    contentDescription = "Flip",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
+
+        // 4. BOTTOM CONTROLS — full Rarevision-style layout
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Filter carousel (like Rarevision filter row above the controls)
+            FilterCarousel(
+                currentTint = currentTint,
+                onTintSelected = { currentTint = it }
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Bottom action row: Gallery | REC | OSD edit
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .padding(horizontal = 24.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Left: Import / Post Studio
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.width(72.dp)
                 ) {
-                    Box(
+                    IconButton(
+                        onClick = { galleryPicker.launch("video/*") },
                         modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(if (captureMode == CaptureMode.VIDEO) Color(0xFFD50000) else Color.Transparent)
-                            .clickable { captureMode = CaptureMode.VIDEO }
-                            .padding(vertical = 4.dp),
-                        contentAlignment = Alignment.Center
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1C1C1C))
+                            .border(1.dp, Color(0xFF444444), CircleShape)
                     ) {
-                        Text("VIDEO", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Icon(Icons.Default.FolderOpen, contentDescription = "Import", tint = Color.White, modifier = Modifier.size(22.dp))
                     }
-
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(if (captureMode == CaptureMode.PHOTO) Color(0xFF00E5FF) else Color.Transparent)
-                            .clickable { captureMode = CaptureMode.PHOTO }
-                            .padding(vertical = 4.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("PHOTO", color = if (captureMode == CaptureMode.PHOTO) Color.Black else Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("IMPORT", color = Color(0xFFAAAAAA), fontSize = 9.sp, fontFamily = FontFamily.Monospace)
                 }
 
-                // Main Shutter / Record Button
+                // Center: Main REC / SNAP shutter — big, like Rarevision
                 Box(
                     modifier = Modifier
-                        .size(64.dp)
+                        .size(82.dp)
                         .clip(CircleShape)
-                        .background(
-                            if (captureMode == CaptureMode.VIDEO) {
-                                if (isRecording) Color(0xFFFF1744) else Color(0xFFD50000)
-                            } else {
-                                Color(0xFF00E5FF)
-                            }
-                        )
-                        .border(3.dp, Color.White, CircleShape)
-                        .shadow(6.dp, CircleShape)
+                        .background(Color.White)
                         .clickable {
                             if (captureMode == CaptureMode.VIDEO) {
                                 if (isRecording) {
@@ -262,369 +294,264 @@ fun VhsCameraScreen(
                                 cameraManager.takePhoto(
                                     onSuccess = { bitmap ->
                                         val saved = cameraManager.saveBitmapToGallery(bitmap)
-                                        Toast.makeText(
-                                            context,
-                                            if (saved) "Photo Saved to Gallery!" else "Error saving photo",
-                                            Toast.LENGTH_SHORT
-                                        ).show()
+                                        Toast.makeText(context, if (saved) "Photo saved!" else "Error saving", Toast.LENGTH_SHORT).show()
                                     },
-                                    onError = {
-                                        Toast.makeText(context, "Capture error: ${it.message}", Toast.LENGTH_SHORT).show()
-                                    }
+                                    onError = { Toast.makeText(context, "Capture failed", Toast.LENGTH_SHORT).show() }
                                 )
+                                // Dismiss flash after short delay
+                                // (handled with LaunchedEffect below)
                             }
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = if (captureMode == CaptureMode.VIDEO) (if (isRecording) "STOP" else "REC") else "SNAP",
-                        color = if (captureMode == CaptureMode.PHOTO) Color.Black else Color.White,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
+                    // Inner circle — red when recording, grey outline for photo
+                    Box(
+                        modifier = Modifier
+                            .size(70.dp)
+                            .clip(if (captureMode == CaptureMode.VIDEO && isRecording) RoundedCornerShape(10.dp) else CircleShape)
+                            .background(
+                                when {
+                                    captureMode == CaptureMode.VIDEO && isRecording -> Color(0xFFFF1744).copy(alpha = recAlpha.coerceIn(0.6f, 1f))
+                                    captureMode == CaptureMode.VIDEO -> Color(0xFFFF1744)
+                                    else -> Color(0xFFEEEEEE)
+                                }
+                            )
                     )
                 }
 
-                // Tactile Controls Grid
+                // Right: OSD edit + Post studio
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(5.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.width(72.dp)
                 ) {
-                    // Filter Tint Cycle
-                    CamcorderButton(
-                        icon = Icons.Default.ColorLens,
-                        label = currentTint.displayName,
-                        accentColor = Color(0xFFFFB300)
+                    IconButton(
+                        onClick = { isStudioOpen = true },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1C1C1C))
+                            .border(1.dp, Color(0xFF444444), CircleShape)
                     ) {
-                        val tints = VhsTint.values()
-                        val nextIdx = (currentTint.ordinal + 1) % tints.size
-                        currentTint = tints[nextIdx]
+                        Icon(Icons.Default.MovieFilter, contentDescription = "Studio", tint = Color(0xFFE040FB), modifier = Modifier.size(22.dp))
                     }
-
-                    // Post Studio (Intro / Outro Editor)
-                    CamcorderButton(
-                        icon = Icons.Default.MovieFilter,
-                        label = "POST STUDIO",
-                        accentColor = Color(0xFFE040FB)
-                    ) {
-                        isStudioOpen = true
-                    }
-
-                    // OSD / Text Editor
-                    CamcorderButton(
-                        icon = Icons.Default.Edit,
-                        label = "OSD / DATE",
-                        accentColor = Color(0xFF00E5FF)
-                    ) {
-                        editTitleText = osdConfig.customTitle
-                        editDateText = osdConfig.customDateText
-                        isOsdEditOpen = true
-                    }
-
-                    // Tape Glitch Flutter Toggle
-                    CamcorderButton(
-                        icon = Icons.Default.GraphicEq,
-                        label = if (trackingValue > 0f) "GLITCH: ON" else "GLITCH: OFF",
-                        accentColor = if (trackingValue > 0f) Color.Red else Color.Gray
-                    ) {
-                        trackingValue = if (trackingValue == 0f) 0.70f else 0.0f
-                    }
-
-                    // Import Media
-                    CamcorderButton(
-                        icon = Icons.Default.FolderOpen,
-                        label = "IMPORT MEDIA",
-                        accentColor = Color(0xFF00E676)
-                    ) {
-                        galleryPicker.launch("video/*")
-                    }
-                }
-
-                // Bottom Zoom, Torch, Flip Bar
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceAround
-                ) {
-                    IconButton(onClick = {
-                        currentZoom = (currentZoom - 0.5f).coerceAtLeast(1.0f)
-                        cameraManager.setZoomRatio(currentZoom)
-                    }) {
-                        Icon(Icons.Default.ZoomOut, contentDescription = "Zoom Out", tint = Color.White)
-                    }
-
-                    IconButton(onClick = {
-                        cameraManager.toggleTorch()
-                    }) {
-                        Icon(Icons.Default.FlashOn, contentDescription = "Torch", tint = Color.Yellow)
-                    }
-
-                    IconButton(onClick = {
-                        cameraManager.toggleCamera(lifecycleOwner, previewView)
-                    }) {
-                        Icon(Icons.Default.Cameraswitch, contentDescription = "Flip", tint = Color.White)
-                    }
-
-                    IconButton(onClick = {
-                        currentZoom = (currentZoom + 0.5f).coerceAtMost(5.0f)
-                        cameraManager.setZoomRatio(currentZoom)
-                    }) {
-                        Icon(Icons.Default.ZoomIn, contentDescription = "Zoom In", tint = Color.White)
-                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("STUDIO", color = Color(0xFFAAAAAA), fontSize = 9.sp, fontFamily = FontFamily.Monospace)
                 }
             }
         }
 
-        // 4. Post-Recording Studio Overlay (Intro / Outro & Glitch Editor)
-        AnimatedVisibility(
-            visible = isStudioOpen,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .fillMaxSize()
-                .zIndex(100f)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.90f))
-                    .clickable(enabled = false) { },
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    modifier = Modifier
-                        .width(420.dp)
-                        .background(Color(0xFF22222E), RoundedCornerShape(12.dp))
-                        .border(2.dp, Color(0xFF44445A), RoundedCornerShape(12.dp))
-                        .padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "VHS POST-PROCESSING STUDIO",
-                        color = Color.White,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Intro Type Selector
-                    Text("INTRO SEQUENCE", color = Color(0xFF00E5FF), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        VhsIntroType.values().forEach { intro ->
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(if (studioConfig.introType == intro) Color(0xFF00E5FF) else Color(0xFF333344))
-                                    .clickable { studioConfig = studioConfig.copy(introType = intro) }
-                                    .padding(vertical = 6.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = intro.label,
-                                    color = if (studioConfig.introType == intro) Color.Black else Color.White,
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Outro Type Selector
-                    Text("OUTRO SEQUENCE", color = Color(0xFFFFB300), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        VhsOutroType.values().forEach { outro ->
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(if (studioConfig.outroType == outro) Color(0xFFFFB300) else Color(0xFF333344))
-                                    .clickable { studioConfig = studioConfig.copy(outroType = outro) }
-                                    .padding(vertical = 6.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = outro.label,
-                                    color = if (studioConfig.outroType == outro) Color.Black else Color.White,
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Transition Effect Selector
-                    Text("IN-BETWEEN TRANSITION EFFECT", color = Color(0xFFE040FB), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        VhsTransitionEffect.values().forEach { trans ->
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(if (studioConfig.transitionEffect == trans) Color(0xFFE040FB) else Color(0xFF333344))
-                                    .clickable { studioConfig = studioConfig.copy(transitionEffect = trans) }
-                                    .padding(vertical = 6.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = trans.label,
-                                    color = if (studioConfig.transitionEffect == trans) Color.Black else Color.White,
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        Button(
-                            onClick = { isStudioOpen = false },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
-                        ) {
-                            Text("Close", color = Color.White)
-                        }
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Button(
-                            onClick = {
-                                isStudioOpen = false
-                                Toast.makeText(context, "Applied Intro/Outro & Saved to Movies!", Toast.LENGTH_SHORT).show()
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF))
-                        ) {
-                            Text("Save Final Video", color = Color.Black, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
+        // Photo flash dismiss
+        LaunchedEffect(photoFlashVisible) {
+            if (photoFlashVisible) {
+                delay(100)
+                photoFlashVisible = false
             }
         }
 
-        // 5. In-App Box Overlay for OSD Text Editing
-        AnimatedVisibility(
-            visible = isOsdEditOpen,
-            enter = fadeIn(),
-            exit = fadeOut(),
+        // 5. OSD Edit Overlay
+        AnimatedVisibility(visible = isOsdEditOpen, enter = fadeIn(), exit = fadeOut(),
+            modifier = Modifier.fillMaxSize().zIndex(100f)) {
+            OsdEditOverlay(
+                titleText = editTitleText,
+                dateText = editDateText,
+                noiseValue = noiseValue,
+                onTitleChange = { editTitleText = it },
+                onDateChange = { editDateText = it },
+                onNoiseChange = { noiseValue = it },
+                onCancel = { isOsdEditOpen = false },
+                onSave = {
+                    osdConfig = osdConfig.copy(customTitle = editTitleText, customDateText = editDateText)
+                    isOsdEditOpen = false
+                }
+            )
+        }
+
+        // 6. Post-Studio Overlay
+        AnimatedVisibility(visible = isStudioOpen, enter = fadeIn(), exit = fadeOut(),
+            modifier = Modifier.fillMaxSize().zIndex(100f)) {
+            StudioOverlay(
+                studioConfig = studioConfig,
+                onConfigChange = { studioConfig = it },
+                onClose = { isStudioOpen = false },
+                onSave = {
+                    isStudioOpen = false
+                    Toast.makeText(context, "Post-processing applied & saved!", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
+        // 7. OSD Edit button — top-right corner shortcut icon
+        IconButton(
+            onClick = {
+                editTitleText = osdConfig.customTitle
+                editDateText = osdConfig.customDateText
+                isOsdEditOpen = true
+            },
             modifier = Modifier
-                .fillMaxSize()
-                .zIndex(100f)
+                .align(Alignment.TopEnd)
+                .padding(top = 64.dp, end = 16.dp)
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.45f))
         ) {
-            Box(
+            Icon(Icons.Default.Edit, contentDescription = "Edit OSD", tint = Color.White, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun CaptureModeTab(
+    label: String,
+    isSelected: Boolean,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (isSelected) Color.White else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Icon(icon, contentDescription = label,
+            tint = if (isSelected) Color.Black else Color.White,
+            modifier = Modifier.size(14.dp))
+        Text(label,
+            color = if (isSelected) Color.Black else Color.White,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.Monospace)
+    }
+}
+
+@Composable
+private fun FilterCarousel(
+    currentTint: VhsTint,
+    onTintSelected: (VhsTint) -> Unit
+) {
+    val scrollState = rememberScrollState()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(scrollState)
+            .padding(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        VhsTint.values().forEach { tint ->
+            val isSelected = tint == currentTint
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.85f))
-                    .clickable(enabled = false) { },
-                contentAlignment = Alignment.Center
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (isSelected) Color(0xFF222222) else Color.Transparent)
+                    .border(
+                        1.dp,
+                        if (isSelected) Color.White else Color(0xFF444444),
+                        RoundedCornerShape(10.dp)
+                    )
+                    .clickable { onTintSelected(tint) }
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
             ) {
-                Column(
+                // Color dot preview
+                Box(
                     modifier = Modifier
-                        .width(360.dp)
-                        .background(Color(0xFF22222C), RoundedCornerShape(12.dp))
-                        .border(2.dp, Color(0xFF444455), RoundedCornerShape(12.dp))
-                        .padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "EDIT VHS OSD TEXT",
-                        color = Color.White,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(tintPreviewColor(tint))
+                        .border(
+                            width = if (isSelected) 2.dp else 0.dp,
+                            color = if (isSelected) Color.White else Color.Transparent,
+                            shape = CircleShape
+                        )
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = tint.displayName.uppercase(),
+                    color = if (isSelected) Color.White else Color(0xFFAAAAAA),
+                    fontSize = 8.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    textAlign = TextAlign.Center,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.width(56.dp)
+                )
+            }
+        }
+    }
+}
 
-                    Spacer(modifier = Modifier.height(16.dp))
+private fun tintPreviewColor(tint: VhsTint): Color = when (tint) {
+    VhsTint.BLANK -> Color(0xFF282828)
+    VhsTint.STANDARD -> Color(0xFF8B7355)
+    VhsTint.NIGHT_VISION -> Color(0xFF00CC44)
+    VhsTint.GLITCH_MAX -> Color(0xFFCC0055)
+    VhsTint.WARM_SEPIA -> Color(0xFFC8783C)
+    VhsTint.MONO_BW -> Color(0xFF888888)
+    VhsTint.CYBER_BLUE -> Color(0xFF0077CC)
+    VhsTint.LIMINAL_YELLOW -> Color(0xFFAAAA22)
+}
 
-                    OutlinedTextField(
-                        value = editTitleText,
-                        onValueChange = { editTitleText = it },
-                        label = { Text("Header Text (e.g. RARE-VHS)") },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFF00E5FF),
-                            unfocusedBorderColor = Color.Gray,
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White
-                        ),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+@Composable
+private fun OsdEditOverlay(
+    titleText: String,
+    dateText: String,
+    noiseValue: Float,
+    onTitleChange: (String) -> Unit,
+    onDateChange: (String) -> Unit,
+    onNoiseChange: (Float) -> Unit,
+    onCancel: () -> Unit,
+    onSave: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.85f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(0.9f)
+                .background(Color(0xFF1A1A22), RoundedCornerShape(14.dp))
+                .border(1.dp, Color(0xFF3A3A4A), RoundedCornerShape(14.dp))
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text("OSD OVERLAY", color = Color.White, fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Spacer(modifier = Modifier.height(16.dp))
 
-                    Spacer(modifier = Modifier.height(12.dp))
+            OutlinedTextField(
+                value = titleText, onValueChange = onTitleChange,
+                label = { Text("Header / Title Text") },
+                colors = osdFieldColors(), singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            OutlinedTextField(
+                value = dateText, onValueChange = onDateChange,
+                label = { Text("Date (e.g. OCT. 14 1995)") },
+                colors = osdFieldColors(), singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("Grain / Noise: ${(noiseValue * 100).toInt()}%",
+                color = Color.LightGray, fontSize = 11.sp)
+            Slider(value = noiseValue, onValueChange = onNoiseChange,
+                valueRange = 0f..1f,
+                colors = SliderDefaults.colors(thumbColor = Color(0xFF00E5FF)))
 
-                    OutlinedTextField(
-                        value = editDateText,
-                        onValueChange = { editDateText = it },
-                        label = { Text("Date Display (e.g. OCT. 14 1995)") },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFF00E5FF),
-                            unfocusedBorderColor = Color.Gray,
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White
-                        ),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Text(
-                        text = "Static Noise Level: ${(noiseValue * 100).toInt()}%",
-                        color = Color.LightGray,
-                        fontSize = 12.sp
-                    )
-                    Slider(
-                        value = noiseValue,
-                        onValueChange = { noiseValue = it },
-                        valueRange = 0.0f..1.0f,
-                        colors = SliderDefaults.colors(thumbColor = Color(0xFF00E5FF))
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        Button(
-                            onClick = { isOsdEditOpen = false },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
-                        ) {
-                            Text("Cancel", color = Color.White)
-                        }
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Button(
-                            onClick = {
-                                osdConfig = osdConfig.copy(
-                                    customTitle = editTitleText,
-                                    customDateText = editDateText
-                                )
-                                isOsdEditOpen = false
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF))
-                        ) {
-                            Text("Save OSD", color = Color.Black, fontWeight = FontWeight.Bold)
-                        }
-                    }
+            Spacer(modifier = Modifier.height(14.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Button(onClick = onCancel, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C))) {
+                    Text("Cancel", color = Color.White)
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Button(onClick = onSave, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF))) {
+                    Text("Save", color = Color.Black, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -632,37 +559,109 @@ fun VhsCameraScreen(
 }
 
 @Composable
-private fun CamcorderButton(
-    icon: ImageVector,
-    label: String,
-    accentColor: Color,
-    onClick: () -> Unit
+private fun StudioOverlay(
+    studioConfig: VideoStudioConfig,
+    onConfigChange: (VideoStudioConfig) -> Unit,
+    onClose: () -> Unit,
+    onSave: () -> Unit
 ) {
-    Row(
+    Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .height(38.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(Color(0xFF2B2B38))
-            .border(1.dp, Color(0xFF404052), RoundedCornerShape(6.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.90f)),
+        contentAlignment = Alignment.Center
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            tint = accentColor,
-            modifier = Modifier.size(16.dp)
-        )
-        Spacer(modifier = Modifier.width(5.dp))
-        Text(
-            text = label,
-            color = Color.White,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 9.5.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .background(Color(0xFF1A1A22), RoundedCornerShape(14.dp))
+                .border(1.dp, Color(0xFF3A3A4A), RoundedCornerShape(14.dp))
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text("POST-PROCESSING STUDIO", color = Color.White, fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // INTRO
+            SectionLabel("INTRO SEQUENCE", Color(0xFF00E5FF))
+            SelectorRow(VhsIntroType.values().toList(), studioConfig.introType,
+                label = { it.label }, activeColor = Color(0xFF00E5FF)) {
+                onConfigChange(studioConfig.copy(introType = it))
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // OUTRO
+            SectionLabel("OUTRO SEQUENCE", Color(0xFFFFB300))
+            SelectorRow(VhsOutroType.values().toList(), studioConfig.outroType,
+                label = { it.label }, activeColor = Color(0xFFFFB300)) {
+                onConfigChange(studioConfig.copy(outroType = it))
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // TRANSITIONS
+            SectionLabel("GLITCH TRANSITION", Color(0xFFE040FB))
+            SelectorRow(VhsTransitionEffect.values().toList(), studioConfig.transitionEffect,
+                label = { it.label }, activeColor = Color(0xFFE040FB)) {
+                onConfigChange(studioConfig.copy(transitionEffect = it))
+            }
+            Spacer(modifier = Modifier.height(18.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Button(onClick = onClose, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C2C2C))) {
+                    Text("Close", color = Color.White)
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Button(onClick = onSave, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00E5FF))) {
+                    Text("Save & Apply", color = Color.Black, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
     }
 }
+
+@Composable
+private fun SectionLabel(text: String, color: Color) {
+    Text(text, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+        fontFamily = FontFamily.Monospace,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp))
+}
+
+@Composable
+private fun <T> SelectorRow(
+    items: List<T>,
+    selected: T,
+    label: (T) -> String,
+    activeColor: Color,
+    onSelect: (T) -> Unit
+) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        items.forEach { item ->
+            val isSelected = item == selected
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(if (isSelected) activeColor else Color(0xFF262632))
+                    .border(1.dp, if (isSelected) activeColor else Color(0xFF3A3A4A), RoundedCornerShape(6.dp))
+                    .clickable { onSelect(item) }
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(label(item), color = if (isSelected) Color.Black else Color(0xFFCCCCCC),
+                    fontSize = 9.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace,
+                    textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+    }
+}
+
+@Composable
+private fun osdFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedBorderColor = Color(0xFF00E5FF),
+    unfocusedBorderColor = Color(0xFF444455),
+    focusedTextColor = Color.White,
+    unfocusedTextColor = Color.White,
+    focusedLabelColor = Color(0xFF00E5FF),
+    unfocusedLabelColor = Color.Gray
+)

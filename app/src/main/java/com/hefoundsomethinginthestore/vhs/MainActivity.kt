@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
         } else {
             Toast.makeText(
                 this,
-                "Camera and Audio permissions are required to run HeFoundSomethingInTheStore.",
+                "Camera and Audio permissions are required.",
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -44,8 +44,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         cameraManager = CameraManager(this)
 
-        hideSystemBars()
-
         if (hasRequiredPermissions()) {
             setupUi()
         } else {
@@ -54,9 +52,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun hasRequiredPermissions(): Boolean {
-        val cameraPermission = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-        val audioPermission = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-        return cameraPermission && audioPermission
+        val cameraOk = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        val audioOk = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        return cameraOk && audioOk
     }
 
     private fun requestPermissions() {
@@ -71,6 +69,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun setupUi() {
+        // CRITICAL: setContent MUST come before hideSystemBars so DecorView is attached
         setContent {
             Surface(
                 modifier = Modifier.fillMaxSize(),
@@ -79,6 +78,8 @@ class MainActivity : ComponentActivity() {
                 VhsCameraScreen(cameraManager = cameraManager)
             }
         }
+        // Now safe to manipulate window insets
+        hideSystemBars()
     }
 
     private fun hideSystemBars() {

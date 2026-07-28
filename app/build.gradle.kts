@@ -11,8 +11,8 @@ android {
         applicationId = "com.hefoundsomethinginthestore.vhs"
         minSdk = 24
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -54,7 +54,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.3")
     implementation("androidx.activity:activity-compose:1.9.0")
     
-    // Compose BOM
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
@@ -63,7 +62,6 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
-    // CameraX
     val cameraVersion = "1.3.4"
     implementation("androidx.camera:camera-core:$cameraVersion")
     implementation("androidx.camera:camera-camera2:$cameraVersion")
@@ -71,10 +69,7 @@ dependencies {
     implementation("androidx.camera:camera-video:$cameraVersion")
     implementation("androidx.camera:camera-view:$cameraVersion")
 
-    // Coil for image loading
     implementation("io.coil-kt:coil-compose:2.6.0")
-
-    // Guava / Futures
     implementation("com.google.guava:guava:33.2.1-android")
     implementation("androidx.concurrent:concurrent-futures:1.2.0")
 
